@@ -1,21 +1,40 @@
-
 import { describe, expect, it } from "vitest";
+import { Cl } from "@stacks/transactions";
 
 const accounts = simnet.getAccounts();
-const address1 = accounts.get("wallet_1")!;
+const deployer = accounts.get("deployer")!;
+const wallet1 = accounts.get("wallet_1")!;
+const wallet2 = accounts.get("wallet_2")!;
 
-/*
-  The test below is an example. To learn more, read the testing documentation here:
-  https://docs.hiro.so/stacks/clarinet-js-sdk
-*/
+describe("POI NFT Contract", () => {
+    it("should allow contract owner to verify addresses", () => {
+        const verifyTx = simnet.callPublicFn("POI", "verify-address", 
+            [Cl.principal(wallet1)], 
+            deployer
+        );
+        expect(verifyTx.result).toBeOk(Cl.bool(true));
+    });
 
-describe("example tests", () => {
-  it("ensures simnet is well initalised", () => {
-    expect(simnet.blockHeight).toBeDefined();
-  });
+    it("should allow verified address to mint POI NFT", () => {
+        // First verify the address
+        simnet.callPublicFn("POI", "verify-address", 
+            [Cl.principal(wallet1)], 
+            deployer
+        );
 
-  // it("shows an example", () => {
-  //   const { result } = simnet.callReadOnlyFn("counter", "get-counter", [], address1);
-  //   expect(result).toBeUint(0);
-  // });
+        // Then mint NFT
+        const mintTx = simnet.callPublicFn("POI", "mint", 
+            [], 
+            wallet1
+        );
+        expect(mintTx.result).toBeOk(Cl.uint(1));
+    });
+
+    it("should not allow unverified address to mint", () => {
+        const mintTx = simnet.callPublicFn("POI", "mint", 
+            [], 
+            wallet2
+        );
+        expect(mintTx.result).toBeErr(Cl.uint(101));
+    });
 });
