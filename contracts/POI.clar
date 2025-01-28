@@ -1,0 +1,46 @@
+;; POI NFT Contract
+
+;; Constants
+(define-constant contract-owner tx-sender)
+(define-constant err-owner-only (err u100))
+(define-constant err-not-verified (err u101))
+(define-constant err-already-has-poi (err u102))
+
+;; Data vars
+(define-data-var last-token-id uint u0)
+
+;; Data maps
+(define-map token-uri {token-id: uint} {uri: (string-utf8 256)})
+(define-map verified-addresses principal bool)
+(define-map owner-token principal uint)
+
+;; SFTs
+(define-non-fungible-token poi-nft uint)
+
+;; Verification functions
+(define-public (verify-address (address principal))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set verified-addresses address true)
+        (ok true)))
+
+;; NFT functions
+(define-public (mint)
+    (let 
+        ((token-id (+ (var-get last-token-id) u1)))
+        (asserts! (is-some (map-get? verified-addresses tx-sender)) err-not-verified)
+        (asserts! (is-none (map-get? owner-token tx-sender)) err-already-has-poi)
+        (try! (nft-mint? poi-nft token-id tx-sender))
+        (var-set last-token-id token-id)
+        (map-set owner-token tx-sender token-id)
+        (ok token-id)))
+
+;; NFT Trait Implementation
+(define-read-only (get-last-token-id)
+    (ok (var-get last-token-id)))
+
+(define-read-only (get-token-uri (token-id uint))
+    (ok (map-get? token-uri {token-id: token-id})))
+
+(define-read-only (get-owner (token-id uint))
+    (ok (nft-get-owner? poi-nft token-id)))
