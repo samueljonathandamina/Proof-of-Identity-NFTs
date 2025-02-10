@@ -73,3 +73,15 @@
         (var-set last-token-id token-id)
         (map-set owner-token tx-sender token-id)
         (ok token-id)))
+
+
+;; Add to constants
+(define-constant expiration-blocks u52560) ;; Example: 1 year in blocks
+
+;; Add to data maps
+(define-map token-expiry {token-id: uint} {expiry: uint})
+
+;; Add expiry check function
+(define-read-only (is-token-valid (token-id uint))
+    (let ((expiry (unwrap! (map-get? token-expiry {token-id: token-id}) (ok false))))
+        (ok (< stacks-block-height (get expiry expiry)))))
