@@ -44,3 +44,32 @@
 
 (define-read-only (get-owner (token-id uint))
     (ok (nft-get-owner? poi-nft token-id)))
+
+
+
+;; Add to existing data maps
+(define-map token-metadata 
+    {token-id: uint} 
+    {
+        name: (string-utf8 256),
+        description: (string-utf8 1024),
+        creation-date: uint
+    })
+
+;; Add metadata during mint
+(define-public (mint-with-metadata (name (string-utf8 256)) (description (string-utf8 1024)))
+    (let 
+        ((token-id (+ (var-get last-token-id) u1)))
+        (asserts! (is-some (map-get? verified-addresses tx-sender)) err-not-verified)
+        (asserts! (is-none (map-get? owner-token tx-sender)) err-already-has-poi)
+        (try! (nft-mint? poi-nft token-id tx-sender))
+        (map-set token-metadata 
+            {token-id: token-id}
+            {
+                name: name,
+                description: description,
+                creation-date: stacks-block-height
+            })
+        (var-set last-token-id token-id)
+        (map-set owner-token tx-sender token-id)
+        (ok token-id)))
