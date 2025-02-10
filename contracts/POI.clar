@@ -85,3 +85,18 @@
 (define-read-only (is-token-valid (token-id uint))
     (let ((expiry (unwrap! (map-get? token-expiry {token-id: token-id}) (ok false))))
         (ok (< stacks-block-height (get expiry expiry)))))
+
+
+
+;; Add to constants
+(define-constant err-token-revoked (err u103))
+
+;; Add to data maps
+(define-map revoked-tokens uint bool)
+
+;; Add revocation function
+(define-public (revoke-token (token-id uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set revoked-tokens token-id true)
+        (ok true)))
