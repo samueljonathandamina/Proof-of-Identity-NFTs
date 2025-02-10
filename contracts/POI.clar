@@ -113,3 +113,19 @@
         (asserts! (is-eq tx-sender contract-owner) err-owner-only)
         (map-set verification-level address level)
         (ok true)))
+
+
+;; Add to data maps
+(define-map update-history 
+    {token-id: uint} 
+    {updates: (list 10 {block: uint, action: (string-utf8 64)})}
+)
+
+;; Add update tracking function
+(define-public (record-update (token-id uint) (action (string-utf8 64)))
+    (let ((current-history (default-to {updates: (list)} (map-get? update-history {token-id: token-id}))))
+        (map-set update-history 
+            {token-id: token-id}
+            {updates: (unwrap! (as-max-len? (concat (get updates current-history) (list {block: stacks-block-height, action: action})) u10) (err u104))}
+        )
+        (ok true)))
