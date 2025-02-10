@@ -129,3 +129,14 @@
             {updates: (unwrap! (as-max-len? (concat (get updates current-history) (list {block: stacks-block-height, action: action})) u10) (err u104))}
         )
         (ok true)))
+
+
+;; Add to data maps
+(define-map recovery-addresses {token-id: uint} {backup: principal})
+
+;; Add recovery address setting
+(define-public (set-recovery-address (token-id uint) (backup-address principal))
+    (begin
+        (asserts! (is-eq (some tx-sender) (nft-get-owner? poi-nft token-id)) err-owner-only)
+        (map-set recovery-addresses {token-id: token-id} {backup: backup-address})
+        (ok true)))
