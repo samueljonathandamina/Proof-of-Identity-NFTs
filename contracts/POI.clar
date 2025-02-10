@@ -140,3 +140,22 @@
         (asserts! (is-eq (some tx-sender) (nft-get-owner? poi-nft token-id)) err-owner-only)
         (map-set recovery-addresses {token-id: token-id} {backup: backup-address})
         (ok true)))
+
+
+
+
+;; Add to data maps
+(define-map endorsements 
+    {token-id: uint} 
+    {endorsers: (list 5 principal)}
+)
+
+;; Add endorsement function
+(define-public (endorse-identity (token-id uint))
+    (let ((current-endorsements (default-to {endorsers: (list)} (map-get? endorsements {token-id: token-id}))))
+        (asserts! (is-some (map-get? verified-addresses tx-sender)) err-not-verified)
+        (map-set endorsements 
+            {token-id: token-id}
+            {endorsers: (unwrap! (as-max-len? (concat (get endorsers current-endorsements) (list tx-sender)) u5) (err u105))}
+        )
+        (ok true)))
