@@ -100,3 +100,16 @@
         (asserts! (is-eq tx-sender contract-owner) err-owner-only)
         (map-set revoked-tokens token-id true)
         (ok true)))
+
+
+
+
+;; Add to data maps
+(define-map verification-level principal uint)
+
+;; Add verification level function
+(define-public (set-verification-level (address principal) (level uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set verification-level address level)
+        (ok true)))
