@@ -159,3 +159,116 @@
             {endorsers: (unwrap! (as-max-len? (concat (get endorsers current-endorsements) (list tx-sender)) u5) (err u105))}
         )
         (ok true)))
+
+
+;; Add to constants
+(define-constant tier-basic u1)
+(define-constant tier-silver u2)
+(define-constant tier-gold u3)
+
+;; Add to data maps
+(define-map user-tiers principal uint)
+
+;; Add tier management function
+(define-public (set-user-tier (address principal) (tier uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set user-tiers address tier)
+        (ok true)))
+
+(define-read-only (get-user-tier (address principal))
+    (default-to u0 (map-get? user-tiers address)))
+
+
+
+;; Add to data maps
+(define-map transfer-locks uint {unlock-height: uint, recipient: principal})
+
+;; Add transfer lock function
+(define-public (schedule-transfer (token-id uint) (recipient principal) (blocks uint))
+    (begin
+        (asserts! (is-eq (some tx-sender) (nft-get-owner? poi-nft token-id)) err-owner-only)
+        (map-set transfer-locks token-id 
+            {
+                unlock-height: (+ stacks-block-height blocks),
+                recipient: recipient
+            })
+        (ok true)))
+
+
+;; Add to data maps
+(define-map reputation-scores principal uint)
+
+;; Add reputation management
+(define-public (update-reputation (address principal) (score uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set reputation-scores address score)
+        (ok true)))
+
+(define-read-only (get-reputation (address principal))
+    (default-to u0 (map-get? reputation-scores address)))
+
+
+
+;; Add to data maps
+(define-map metadata-versions 
+    {token-id: uint} 
+    {versions: (list 5 {
+        version: uint,
+        timestamp: uint,
+        metadata-hash: (string-utf8 64)
+    })})
+
+(define-public (add-metadata-version (token-id uint) (metadata-hash (string-utf8 64)))
+    (let ((current-versions (default-to {versions: (list)} (map-get? metadata-versions {token-id: token-id}))))
+        (map-set metadata-versions 
+            {token-id: token-id}
+            {versions: (unwrap! (as-max-len? 
+                (concat (get versions current-versions) 
+                (list {version: (+ (len (get versions current-versions)) u1), 
+                      timestamp: stacks-block-height,
+                      metadata-hash: metadata-hash})) u5) (err u106))}
+        )
+        (ok true)))
+
+
+;; Add to data maps
+(define-map delegations 
+    principal 
+    {delegate: principal, expiry: uint})
+
+(define-public (delegate-identity (delegate principal) (duration uint))
+    (begin
+        (asserts! (is-some (map-get? verified-addresses tx-sender)) err-not-verified)
+        (map-set delegations tx-sender 
+            {
+                delegate: delegate,
+                expiry: (+ stacks-block-height duration)
+            })
+        (ok true)))
+
+(define-read-only (check-delegation (owner principal) (delegate principal))
+    (match (map-get? delegations owner)
+        delegation (ok (and 
+            (is-eq (get delegate delegation) delegate)
+            (> (get expiry delegation) stacks-block-height)))
+        (ok false)))
+
+
+;; Add to data maps
+(define-map staked-tokens principal uint)
+
+(define-public (stake-tokens (amount uint))
+    (begin
+        (asserts! (is-some (map-get? verified-addresses tx-sender)) err-not-verified)
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        (map-set staked-tokens tx-sender amount)
+        (ok true)))
+
+(define-public (unstake-tokens)
+    (let ((staked-amount (default-to u0 (map-get? staked-tokens tx-sender))))
+        (asserts! (> staked-amount u0) (err u110))
+        (try! (as-contract (stx-transfer? staked-amount tx-sender tx-sender)))
+        (map-delete staked-tokens tx-sender)
+        (ok true)))
