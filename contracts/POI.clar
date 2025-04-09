@@ -272,3 +272,72 @@
         (try! (as-contract (stx-transfer? staked-amount tx-sender tx-sender)))
         (map-delete staked-tokens tx-sender)
         (ok true)))
+
+
+
+(define-constant err-invalid-lock-time (err u120))
+(define-constant err-transfer-locked (err u121))
+(define-constant min-lock-period u100)
+
+(define-map time-locked-transfers uint 
+    {
+        recipient: principal,
+        unlock-time: uint,
+        status: (string-utf8 10)
+    }
+)
+
+(define-public (create-timed-transfer (token-id uint) (to principal) (lock-blocks uint))
+    (let ((owner (unwrap! (nft-get-owner? poi-nft token-id) err-owner-only)))
+        (asserts! (is-eq tx-sender owner) err-owner-only)
+        (asserts! (>= lock-blocks min-lock-period) err-invalid-lock-time)
+        (map-set time-locked-transfers token-id
+            {
+                recipient: to,
+                unlock-time: (+ stacks-block-height lock-blocks),
+                status: u"PENDING"
+            })
+        (ok true)))
+(define-public (execute-timed-transfer (token-id uint))
+    (let (
+        (transfer-data (unwrap! (map-get? time-locked-transfers token-id) err-transfer-locked))
+        (current-time stacks-block-height)
+    )
+        (asserts! (>= current-time (get unlock-time transfer-data)) err-transfer-locked)
+        (try! (nft-transfer? poi-nft token-id tx-sender (get recipient transfer-data)))
+        (map-delete time-locked-transfers token-id)
+        (ok true)))
+
+
+
+(define-constant err-invalid-hash (err u130))
+(define-constant err-unauthorized-verifier (err u131))
+
+(define-map metadata-verifiers principal bool)
+(define-map verified-metadata uint 
+    {
+        hash: (buff 32),
+        verifier: principal,
+        timestamp: uint
+    }
+)
+
+(define-public (register-verifier (verifier principal))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set metadata-verifiers verifier true)
+        (ok true)))
+
+(define-public (verify-metadata (token-id uint) (metadata-hash (buff 32)))
+    (begin
+        (asserts! (is-some (map-get? metadata-verifiers tx-sender)) err-unauthorized-verifier)
+        (map-set verified-metadata token-id
+            {
+                hash: metadata-hash,
+                verifier: tx-sender,
+                timestamp: stacks-block-height
+            })
+        (ok true)))
+
+(define-read-only (get-verified-metadata (token-id uint))
+    (ok (map-get? verified-metadata token-id)))
