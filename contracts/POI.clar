@@ -341,3 +341,92 @@
 
 (define-read-only (get-verified-metadata (token-id uint))
     (ok (map-get? verified-metadata token-id)))
+
+
+(define-constant err-badge-exists (err u140))
+(define-constant err-invalid-badge (err u141))
+
+(define-map badges 
+    {badge-id: uint} 
+    {
+        name: (string-utf8 64),
+        criteria: (string-utf8 256)
+    }
+)
+
+(define-map user-badges 
+    {user: principal} 
+    {earned: (list 10 uint)}
+)
+
+(define-public (create-badge (badge-id uint) (name (string-utf8 64)) (criteria (string-utf8 256)))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (is-none (map-get? badges {badge-id: badge-id})) err-badge-exists)
+        (map-set badges {badge-id: badge-id}
+            {
+                name: name,
+                criteria: criteria
+            })
+        (ok true)))
+
+(define-public (award-badge (user principal) (badge-id uint))
+    (let ((current-badges (default-to {earned: (list)} (map-get? user-badges {user: user}))))
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (is-some (map-get? badges {badge-id: badge-id})) err-invalid-badge)
+        (map-set user-badges 
+            {user: user}
+            {earned: (unwrap! (as-max-len? (concat (get earned current-badges) (list badge-id)) u10) (err u142))}
+        )
+        (ok true)))
+
+(define-read-only (get-user-badges (user principal))
+    (ok (map-get? user-badges {user: user})))
+
+
+
+(define-constant err-proposal-exists (err u150))
+(define-constant err-invalid-proposal (err u151))
+(define-constant err-already-voted (err u152))
+
+(define-map proposals 
+    {proposal-id: uint} 
+    {
+        title: (string-utf8 256),
+        end-block: uint,
+        yes-votes: uint,
+        no-votes: uint
+    }
+)
+
+(define-map votes 
+    {proposal-id: uint, voter: principal} 
+    {vote: bool}
+)
+
+(define-public (create-proposal (proposal-id uint) (title (string-utf8 256)) (duration uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (is-none (map-get? proposals {proposal-id: proposal-id})) err-proposal-exists)
+        (map-set proposals {proposal-id: proposal-id}
+            {
+                title: title,
+                end-block: (+ stacks-ZZblock-height duration),
+                yes-votes: u0,
+                no-votes: u0
+            })
+        (ok true)))
+
+(define-public (cast-vote (proposal-id uint) (vote bool))
+    (let (
+        (proposal (unwrap! (map-get? proposals {proposal-id: proposal-id}) err-invalid-proposal))
+        (voting-power (+ (get-reputation tx-sender) (get-user-tier tx-sender)))
+    )
+        (asserts! (< stacks-ZZblock-height (get end-block proposal)) err-invalid-proposal)
+        (asserts! (is-none (map-get? votes {proposal-id: proposal-id, voter: tx-sender})) err-already-voted)
+        (map-set votes {proposal-id: proposal-id, voter: tx-sender} {vote: vote})
+        (map-set proposals {proposal-id: proposal-id}
+            (merge proposal 
+                {yes-votes: (if vote (+ (get yes-votes proposal) voting-power) (get yes-votes proposal)),
+                 no-votes: (if (not vote) (+ (get no-votes proposal) voting-power) (get no-votes proposal))}))
+        (ok true)))
