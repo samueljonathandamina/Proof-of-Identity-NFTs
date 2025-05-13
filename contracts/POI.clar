@@ -411,7 +411,7 @@
         (map-set proposals {proposal-id: proposal-id}
             {
                 title: title,
-                end-block: (+ stacks-ZZblock-height duration),
+                end-block: (+ stacks-block-height duration),
                 yes-votes: u0,
                 no-votes: u0
             })
@@ -422,7 +422,7 @@
         (proposal (unwrap! (map-get? proposals {proposal-id: proposal-id}) err-invalid-proposal))
         (voting-power (+ (get-reputation tx-sender) (get-user-tier tx-sender)))
     )
-        (asserts! (< stacks-ZZblock-height (get end-block proposal)) err-invalid-proposal)
+        (asserts! (< stacks-block-height (get end-block proposal)) err-invalid-proposal)
         (asserts! (is-none (map-get? votes {proposal-id: proposal-id, voter: tx-sender})) err-already-voted)
         (map-set votes {proposal-id: proposal-id, voter: tx-sender} {vote: vote})
         (map-set proposals {proposal-id: proposal-id}
