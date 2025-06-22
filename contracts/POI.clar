@@ -430,3 +430,126 @@
                 {yes-votes: (if vote (+ (get yes-votes proposal) voting-power) (get yes-votes proposal)),
                  no-votes: (if (not vote) (+ (get no-votes proposal) voting-power) (get no-votes proposal))}))
         (ok true)))
+
+(define-constant err-invalid-proof (err u200))
+(define-constant err-proof-expired (err u201))
+(define-constant err-unauthorized-bridge (err u202))
+
+(define-data-var bridge-nonce uint u0)
+
+(define-map authorized-bridges principal bool)
+(define-map identity-proofs 
+    {proof-id: (buff 32)} 
+    {
+        token-id: uint,
+        target-chain: (string-utf8 32),
+        expiry: uint,
+        nonce: uint,
+        used: bool
+    }
+)
+
+(define-map bridge-requests
+    {request-id: uint}
+    {
+        requester: principal,
+        token-id: uint,
+        target-chain: (string-utf8 32),
+        timestamp: uint,
+        status: (string-utf8 16)
+    }
+)
+
+(define-public (authorize-bridge (bridge-address principal))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set authorized-bridges bridge-address true)
+        (ok true)))
+
+(define-public (generate-identity-proof (token-id uint) (target-chain (string-utf8 32)) (duration uint))
+    (let (
+        (current-nonce (var-get bridge-nonce))
+        (proof-data (concat 
+            (concat
+                (unwrap-panic (to-consensus-buff? token-id))
+                (unwrap-panic (to-consensus-buff? tx-sender))
+            )
+            (unwrap-panic (to-consensus-buff? current-nonce))
+        ))
+        (proof-id (sha256 proof-data))
+    )
+        (asserts! (is-eq (some tx-sender) (nft-get-owner? poi-nft token-id)) err-owner-only)
+        (asserts! (is-none (map-get? revoked-tokens token-id)) err-token-revoked)
+        (map-set identity-proofs 
+            {proof-id: proof-id}
+            {
+                token-id: token-id,
+                target-chain: target-chain,
+                expiry: (+ stacks-block-height duration),
+                nonce: current-nonce,
+                used: false
+            }
+        )
+        (var-set bridge-nonce (+ current-nonce u1))
+        (ok proof-id)))
+
+(define-public (verify-identity-proof (proof-id (buff 32)) (token-id uint) (original-owner principal))
+    (let (
+        (proof (unwrap! (map-get? identity-proofs {proof-id: proof-id}) err-invalid-proof))
+    )
+        (asserts! (is-some (map-get? authorized-bridges tx-sender)) err-unauthorized-bridge)
+        (asserts! (is-eq (get token-id proof) token-id) err-invalid-proof)
+        (asserts! (< stacks-block-height (get expiry proof)) err-proof-expired)
+        (asserts! (not (get used proof)) err-invalid-proof)
+        (map-set identity-proofs 
+            {proof-id: proof-id}
+            (merge proof {used: true})
+        )
+        (ok {
+            token-id: (get token-id proof),
+            target-chain: (get target-chain proof),
+            nonce: (get nonce proof)
+        })))
+
+(define-public (create-bridge-request (token-id uint) (target-chain (string-utf8 32)))
+    (let (
+        (request-id (+ (var-get bridge-nonce) u1))
+    )
+        (asserts! (is-eq (some tx-sender) (nft-get-owner? poi-nft token-id)) err-owner-only)
+        (map-set bridge-requests
+            {request-id: request-id}
+            {
+                requester: tx-sender,
+                token-id: token-id,
+                target-chain: target-chain,
+                timestamp: stacks-block-height,
+                status: u"PENDING"
+            }
+        )
+        (var-set bridge-nonce request-id)
+        (ok request-id)))
+
+(define-public (process-bridge-request (request-id uint) (status (string-utf8 16)))
+    (let (
+        (request (unwrap! (map-get? bridge-requests {request-id: request-id}) err-invalid-proposal))
+    )
+        (asserts! (is-some (map-get? authorized-bridges tx-sender)) err-unauthorized-bridge)
+        (map-set bridge-requests
+            {request-id: request-id}
+            (merge request {status: status})
+        )
+        (ok true)))
+
+(define-read-only (get-identity-proof (proof-id (buff 32)))
+    (ok (map-get? identity-proofs {proof-id: proof-id})))
+
+(define-read-only (get-bridge-request (request-id uint))
+    (ok (map-get? bridge-requests {request-id: request-id})))
+
+(define-read-only (validate-cross-chain-identity (proof-id (buff 32)) (claimed-token-id uint))
+    (match (map-get? identity-proofs {proof-id: proof-id})
+        proof (ok (and 
+            (is-eq (get token-id proof) claimed-token-id)
+            (< stacks-block-height (get expiry proof))
+            (not (get used proof))))
+        (ok false)))
