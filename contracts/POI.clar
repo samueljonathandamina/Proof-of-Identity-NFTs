@@ -553,3 +553,217 @@
             (< stacks-block-height (get expiry proof))
             (not (get used proof))))
         (ok false)))
+
+
+(define-constant err-invalid-attestation (err u300))
+(define-constant err-insufficient-payment (err u301))
+(define-constant err-service-not-active (err u302))
+(define-constant err-self-attestation (err u303))
+(define-constant err-request-not-found (err u304))
+(define-constant err-attestation-expired (err u305))
+(define-constant err-unauthorized-action (err u306))
+
+(define-data-var attestation-service-counter uint u0)
+(define-data-var attestation-request-counter uint u0)
+
+(define-map attestation-services
+    {service-id: uint}
+    {
+        attester: principal,
+        price: uint,
+        description: (string-utf8 256),
+        reputation-score: uint,
+        active: bool,
+        total-attestations: uint
+    }
+)
+
+(define-map attestation-requests
+    {request-id: uint}
+    {
+        requester: principal,
+        service-id: uint,
+        payment-amount: uint,
+        status: (string-utf8 16),
+        created-at: uint,
+        expires-at: uint,
+        evidence-hash: (buff 32)
+    }
+)
+
+(define-map completed-attestations
+    {attestation-id: uint}
+    {
+        attester: principal,
+        subject: principal,
+        service-id: uint,
+        quality-rating: uint,
+        timestamp: uint,
+        verified: bool
+    }
+)
+
+(define-map escrow-funds
+    {request-id: uint}
+    {
+        amount: uint,
+        locked: bool
+    }
+)
+
+(define-map attester-earnings principal uint)
+
+(define-public (create-attestation-service (price uint) (description (string-utf8 256)))
+    (let (
+        (service-id (+ (var-get attestation-service-counter) u1))
+    )
+        (asserts! (is-some (map-get? verified-addresses tx-sender)) err-not-verified)
+        (asserts! (> price u0) err-insufficient-payment)
+        (map-set attestation-services
+            {service-id: service-id}
+            {
+                attester: tx-sender,
+                price: price,
+                description: description,
+                reputation-score: u100,
+                active: true,
+                total-attestations: u0
+            }
+        )
+        (var-set attestation-service-counter service-id)
+        (ok service-id)))
+
+(define-public (update-service-status (service-id uint) (active bool))
+    (let (
+        (service (unwrap! (map-get? attestation-services {service-id: service-id}) err-service-not-active))
+    )
+        (asserts! (is-eq tx-sender (get attester service)) err-unauthorized-action)
+        (map-set attestation-services
+            {service-id: service-id}
+            (merge service {active: active})
+        )
+        (ok true)))
+
+(define-public (request-attestation (service-id uint) (evidence-hash (buff 32)) (duration uint))
+    (let (
+        (service (unwrap! (map-get? attestation-services {service-id: service-id}) err-service-not-active))
+        (request-id (+ (var-get attestation-request-counter) u1))
+        (payment-amount (get price service))
+    )
+        (asserts! (get active service) err-service-not-active)
+        (asserts! (not (is-eq tx-sender (get attester service))) err-self-attestation)
+        (try! (stx-transfer? payment-amount tx-sender (as-contract tx-sender)))
+        (map-set attestation-requests
+            {request-id: request-id}
+            {
+                requester: tx-sender,
+                service-id: service-id,
+                payment-amount: payment-amount,
+                status: u"PENDING",
+                created-at: stacks-block-height,
+                expires-at: (+ stacks-block-height duration),
+                evidence-hash: evidence-hash
+            }
+        )
+        (map-set escrow-funds
+            {request-id: request-id}
+            {
+                amount: payment-amount,
+                locked: true
+            }
+        )
+        (var-set attestation-request-counter request-id)
+        (ok request-id)))
+
+(define-public (fulfill-attestation (request-id uint) (verified bool))
+    (let (
+        (request (unwrap! (map-get? attestation-requests {request-id: request-id}) err-request-not-found))
+        (service (unwrap! (map-get? attestation-services {service-id: (get service-id request)}) err-service-not-active))
+        (escrow (unwrap! (map-get? escrow-funds {request-id: request-id}) err-insufficient-payment))
+        (attestation-id (+ (var-get attestation-request-counter) u1))
+    )
+        (asserts! (is-eq tx-sender (get attester service)) err-unauthorized-action)
+        (asserts! (is-eq (get status request) u"PENDING") err-invalid-attestation)
+        (asserts! (< stacks-block-height (get expires-at request)) err-attestation-expired)
+        (asserts! (get locked escrow) err-insufficient-payment)
+        (map-set attestation-requests
+            {request-id: request-id}
+            (merge request {status: (if verified u"APPROVED" u"REJECTED")})
+        )
+        (map-set completed-attestations
+            {attestation-id: attestation-id}
+            {
+                attester: tx-sender,
+                subject: (get requester request),
+                service-id: (get service-id request),
+                quality-rating: u0,
+                timestamp: stacks-block-height,
+                verified: verified
+            }
+        )
+        (if verified
+            (map-set verified-addresses (get requester request) true)
+            true
+        )
+        (map-set escrow-funds
+            {request-id: request-id}
+            (merge escrow {locked: false})
+        )
+        (try! (as-contract (stx-transfer? (get amount escrow) tx-sender (get attester service))))
+        (map-set attester-earnings tx-sender 
+            (+ (default-to u0 (map-get? attester-earnings tx-sender)) (get amount escrow)))
+        (map-set attestation-services
+            {service-id: (get service-id request)}
+            (merge service {total-attestations: (+ (get total-attestations service) u1)})
+        )
+        (ok attestation-id)))
+
+(define-public (rate-attestation (attestation-id uint) (rating uint))
+    (let (
+        (attestation (unwrap! (map-get? completed-attestations {attestation-id: attestation-id}) err-invalid-attestation))
+    )
+        (asserts! (is-eq tx-sender (get subject attestation)) err-unauthorized-action)
+        (asserts! (<= rating u5) err-invalid-attestation)
+        (map-set completed-attestations
+            {attestation-id: attestation-id}
+            (merge attestation {quality-rating: rating})
+        )
+        (ok true)))
+
+(define-public (claim-expired-escrow (request-id uint))
+    (let (
+        (request (unwrap! (map-get? attestation-requests {request-id: request-id}) err-request-not-found))
+        (escrow (unwrap! (map-get? escrow-funds {request-id: request-id}) err-insufficient-payment))
+    )
+        (asserts! (is-eq tx-sender (get requester request)) err-unauthorized-action)
+        (asserts! (>= stacks-block-height (get expires-at request)) err-attestation-expired)
+        (asserts! (is-eq (get status request) u"PENDING") err-invalid-attestation)
+        (asserts! (get locked escrow) err-insufficient-payment)
+        (map-set escrow-funds
+            {request-id: request-id}
+            (merge escrow {locked: false})
+        )
+        (map-set attestation-requests
+            {request-id: request-id}
+            (merge request {status: u"EXPIRED"})
+        )
+        (try! (as-contract (stx-transfer? (get amount escrow) tx-sender tx-sender)))
+        (ok true)))
+
+(define-read-only (get-attestation-service (service-id uint))
+    (ok (map-get? attestation-services {service-id: service-id})))
+
+(define-read-only (get-attestation-request (request-id uint))
+    (ok (map-get? attestation-requests {request-id: request-id})))
+
+(define-read-only (get-completed-attestation (attestation-id uint))
+    (ok (map-get? completed-attestations {attestation-id: attestation-id})))
+
+(define-read-only (get-attester-earnings (attester principal))
+    (ok (default-to u0 (map-get? attester-earnings attester))))
+
+(define-read-only (get-active-services)
+    (ok (var-get attestation-service-counter)))
+
+(define-read-only (check-attestation-status (subject principal))
+    (ok (is-some (map-get? verified-addresses subject))))
