@@ -55,6 +55,11 @@ plan:
             path: "contracts\\POI.clar"
             clarity-version: 3
         - emulated-contract-publish:
+            contract-name: identity-recovery
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: "contracts\\identity-recovery.clar"
+            clarity-version: 3
+        - emulated-contract-publish:
             contract-name: identity-score
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
             path: "contracts\\identity-score.clar"

@@ -9,6 +9,7 @@
 (define-constant err-invalid-weight (err u403))
 (define-constant err-insufficient-activity (err u404))
 (define-constant err-score-locked (err u405))
+
 (define-constant err-invalid-period (err u406))
 (define-constant err-unauthorized-reporter (err u407))
 
